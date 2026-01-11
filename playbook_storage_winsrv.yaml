@@ -1,0 +1,146 @@
+---
+- name: Konfiguracja puli dyskowej i udziału sieciowego
+  hosts: WINSRV_Pakura
+
+  vars:
+    pool_name: StoragePool_Pakura
+    vdisk_name: VirtualDisk_Pakura
+
+  tasks:
+    - name: Utworzenie puli dyskowej i warst
+      ansible.windows.win_powershell:
+        script: |
+          if (-not (Get-StoragePool -FriendlyName "{{ pool_name }}" -ErrorAction SilentlyContinue)) {
+            $disks = Get-PhysicalDisk | Where-Object { $_.FriendlyName -in @('SSD1','SSD2','HDD1','HDD2') }
+            New-StoragePool `
+                -FriendlyName "{{ pool_name }}" `
+                -StorageSubsystemFriendlyName "Windows Storage*" `
+                -PhysicalDisks $disks
+            
+            New-StorageTier -StoragePoolFriendlyName "{{ pool_name }}" -FriendlyName "SSD_Tier" -MediaType SSD
+            New-StorageTier -StoragePoolFriendlyName "{{ pool_name }}" -FriendlyName "HDD_Tier" -MediaType HDD
+
+          }
+          
+    - name: Utworzenie wirtualnego dysku
+      ansible.windows.win_powershell:
+        script: |
+          if (-not (Get-VirtualDisk -FriendlyName "{{ vdisk_name }}" -ErrorAction SilentlyContinue)) {
+            $st_ssd = Get-StorageTier -FriendlyName "SSD_Tier"
+            $st_hdd = Get-StorageTier -FriendlyName "HDD_Tier"
+
+            New-VirtualDisk `
+                -StoragePoolFriendlyName "{{ pool_name }}" `
+                -FriendlyName "{{ vdisk_name }}" `
+                -StorageTiers $st_ssd, $st_hdd `
+                -StorageTierSizes 15GB, 15GB `
+                -ResiliencySettingName Mirror `
+                -WriteCacheSize 1GB
+            
+          }
+
+    - name: ReFS i przypisanie litery F
+      ansible.windows.win_powershell:
+        script: |
+          Update-HostStorageCache
+          Start-Sleep -Seconds 2
+
+          $disk = Get-VirtualDisk -FriendlyName "{{ vdisk_name }}" | Get-Disk
+          if ($disk.PartitionStyle -eq 'Raw') {
+              $disk | Initialize-Disk -PartitionStyle GPT -PassThru | New-Partition -DriveLetter F -UseMaximumSize
+              Format-Volume -DriveLetter F -FileSystem ReFS -NewFileSystemLabel "Projekty_Data" -Confirm:$false
+          }
+
+    - name: Utworzenie grupy Kierownicy_Pakura
+      ansible.windows.win_powershell:
+        script: |
+          if (-not (Get-LocalGroup -Name "Kierownicy_Pakura" -ErrorAction SilentlyContinue)) {
+            New-LocalGroup -Name "Kierownicy_Pakura"
+          }
+
+    - name: Utworzenie użytkownika Marek Romanek
+      ansible.windows.win_powershell:
+        script: |
+          if (-not (Get-LocalUser -Name "MarekRomanek" -ErrorAction SilentlyContinue)) {
+            $pass = ConvertTo-SecureString "Zaq12wsx" -AsPlainText -Force
+            New-LocalUser -Name "MarekRomanek" -Password $pass
+          }
+
+    - name: Utworzenie użytkownika Jacek Gula
+      ansible.windows.win_powershell:
+        script: |
+          if (-not (Get-LocalUser -Name "JacekGula" -ErrorAction SilentlyContinue)) {
+            $pass = ConvertTo-SecureString "Zaq12wsx" -AsPlainText -Force
+            New-LocalUser -Name "JacekGula" -Password $pass
+          }
+
+    - name: Dodanie użytkowników do grupy Kierownicy_Pakura
+      ansible.windows.win_powershell:
+        script: |
+          Add-LocalGroupMember `
+            -Group "Kierownicy_Pakura" `
+            -Member "MarekRomanek","JacekGula" `
+            -ErrorAction SilentlyContinue
+
+    - name: Utworzenie katalogu F:\Projekty
+      ansible.windows.win_powershell:
+        script: |
+          if (-not (Test-Path "F:\Projekty")) {
+            New-Item -Path "F:\Projekty" -ItemType Directory
+          }
+
+    - name: Udestąpienie w sieci katalogu Projekty_Pakura
+      ansible.windows.win_powershell:
+        script: |
+          if (-not (Get-SmbShare -Name "Projekty_Pakura" -ErrorAction SilentlyContinue)) {
+            New-SmbShare `
+              -Name "Projekty_Pakura" `
+              -Path "F:\Projekty" `
+              -FullAccess "Administrators","Kierownicy_Pakura"
+          }
+
+    - name: Usunięcie dostępu Everyone do udziału Projekty_Pakura
+      ansible.windows.win_powershell:
+        script: |
+          Revoke-SmbShareAccess `
+            -Name "Projekty_Pakura" `
+            -AccountName "Everyone" `
+            -Force `
+            -ErrorAction SilentlyContinue
+
+    - name: Instalacja 7-Zip
+      ansible.windows.win_powershell:
+        script: |
+          winget install `
+            --id 7zip.7zip `
+            --exact `
+            --accept-package-agreements `
+            --accept-source-agreements `
+            --silent
+
+    - name: Instalacja narzędzia dig (DNS)
+      ansible.windows.win_powershell:
+        script: |
+          winget install `
+            --id dnslookup.dig `
+            --exact `
+            --accept-package-agreements `
+            --accept-source-agreements `
+            --silent
+
+    - name: Instalacja przeglądarki Firefox
+      ansible.windows.win_powershell:
+        script: |
+          winget install `
+            --id Mozilla.Firefox `
+            --exact `
+            --accept-package-agreements `
+            --accept-source-agreements `
+            --silent
+      
+    - name: Rejestr – blokada usuwania drukarek dla nie-administratorów
+      ansible.windows.win_regedit:
+        path: "HKLM:\\Software\\Policies\\Microsoft\\Windows NT\\Printers"
+        name: DisableDeletePrinter
+        data: 1
+        type: dword

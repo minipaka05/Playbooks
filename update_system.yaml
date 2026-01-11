@@ -1,0 +1,26 @@
+---
+- name: Aktualizacja Systemu Operacyjnego
+  hosts: AGH_Pakura
+  become: true
+  tasks:
+    - block:
+        - name: Ustawienie pliku dysku dla aktualizowanego pakietu grub
+          shell: debconf-set-selections <<< "grub-pc grub-pc/install_devices multiselect /dev/sda"
+          args:
+            executable: /bin/bash
+        - name: Aktualizacja listy pakietów i bezpieczny upgrade
+          environment:
+            DEBIAN_FRONTEND: noninteractive
+          ansible.builtin.apt:
+            update_cache: yes
+            upgrade: safe
+            dpkg_options: 'force-confold,force-confdef'
+      rescue:
+        - name: Powiadomienie Discord o bledzie
+          uri:
+            url: https://discord.com/api/webhooks/1459704958403481716/6V0v3eFDWHfGMOIILCoGbWaXSKxrh0H3PpY5OeP3DyW53MTQKOvL0B_CiNJfLYYBWmwq
+            method: POST
+            body_format: json
+            body:
+              content: "Błąd: Automatyczna aktualizacja na serwerze agh nie powiodla sie"
+          ignore_errors: yes

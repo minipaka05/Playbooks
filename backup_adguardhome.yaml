@@ -1,0 +1,58 @@
+---
+- name: Kopia zapasowa AdGuard Home
+  hosts: AGH_Pakura
+  become: true
+  gather_facts: yes
+
+  vars:
+    backup_dir: /backup/adguardhome
+    backup_file: "adguardhome_backup_{{ ansible_date_time.date }}.tar.gz"
+
+  tasks:
+    - block:
+        - name: Utworzenie katalogu na kopie zapasowe
+          ansible.builtin.file:
+            path: "{{ backup_dir }}"
+            state: directory
+            mode: '0755'
+
+        - name: Zatrzymanie usługi AdGuard Home
+          ansible.builtin.systemd:
+            name: AdGuardHome
+            state: stopped
+
+        - name: Wykonanie kopii zapasowej AdGuard Home
+          ansible.builtin.archive:
+            path: /adguardhome/AdGuardHome
+            dest: "{{ backup_dir }}/{{ backup_file }}"
+            format: gz
+
+        - name: Uruchomienie usługi AdGuard Home
+          ansible.builtin.systemd:
+            name: AdGuardHome
+            state: started
+
+        - name: Sprawdzenie czy plik backupu istnieje
+          ansible.builtin.stat:
+            path: "{{ backup_dir }}/{{ backup_file }}"
+          register: backup_stat
+
+        - name: Przerwij jeśli backup się nie utworzył
+          ansible.builtin.fail:
+            msg: "Backup AdGuard Home nie został utworzony"
+          when: not backup_stat.stat.exists
+
+        - name: Pobranie backupu na Ansible
+          ansible.builtin.fetch:
+            src: "{{ backup_dir }}/{{ backup_file }}"
+            dest: "./backups/{{ inventory_hostname }}/"
+            flat: yes
+      rescue:
+        - name: Powiadomienie Discord o bledzie
+          uri:
+            url: https://discord.com/api/webhooks/1459704958403481716/6V0v3eFDWHfGMOIILCoGbWaXSKxrh0H3PpY5OeP3DyW53MTQKOvL0B_CiNJfLYYBWmwq
+            method: POST
+            body_format: json
+            body:
+              content: "Błąd: Automatyczna aktualizacja na serwerze agh nie powiodla sie"
+          ignore_errors: yes

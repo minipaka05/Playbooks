@@ -1,0 +1,101 @@
+---
+- name: Instalacja i konfiguracja AdGuard Home
+  hosts: AGH_Pakura
+  become: true
+  tasks:
+    - name: instalacja lvm
+      ansible.builtin.apt:
+        name: lvm2
+        state: present
+        update_cache: yes
+    - name: tworzenie fizycznego dysku sdb
+      community.general.lvm_pv:
+        device: /dev/sdb
+    - name: tworzenie fizycznego dysku sdc
+      community.general.lvm_pv:
+        device: /dev/sdc
+    - name: tworzenie grupy woluminów
+      community.general.lvg:
+        vg: adg_vg
+        pvs:
+          - /dev/sdb
+          - /dev/sdc
+    - name: utworzenie logicznego woluminu
+      community.general.lvol:
+        vg: adg_vg
+        lv: adg_lv
+        size: +100%FREE
+        opts: "-m1 --type raid1"
+    - name: zamontowanie woluminu w katalogu
+      community.general.filesystem:
+        fstype: ext4
+        dev: /dev/adg_vg/adg_lv
+
+    - name: Utworzenie katalogu /adguardhome
+      ansible.builtin.file:
+        path: /adguardhome
+        state: directory
+    - name: Pobranie AdGuard Home
+      ansible.builtin.get_url:
+        url: https://static.adguard.com/adguardhome/release/AdGuardHome_linux_amd64.tar.gz
+        dest: /adguardhome/adguardhome.tar.gz
+        mode: '0644'
+    - name: Rozpakowanie AdGuard Home
+      ansible.builtin.unarchive:
+        src: /adguardhome/adguardhome.tar.gz
+        dest: /adguardhome
+        remote_src: yes
+        creates: /adguardhome/AdGuardHome
+    - name: Instalacja usługi AdGuard Home
+      ansible.builtin.command: /adguardhome/AdGuardHome/AdGuardHome -s install
+      args:
+        creates: /etc/systemd/system/AdGuardHome.service
+    - name: Uruchomienie AdGuard Home
+      ansible.builtin.systemd:
+        name: AdGuardHome
+        enabled: yes
+        state: started
+
+    - name: Instalacja UFW
+      ansible.builtin.apt:
+        name: ufw
+        state: present
+        update_cache: yes
+    - name: zezwolenie na SSH
+      community.general.ufw:
+        rule: allow
+        port: 22
+        proto: tcp
+    - name:  zezwolenie na AdGuard Home
+      community.general.ufw:
+        rule: allow
+        port: 3000
+        proto: tcp
+    - name: Zezwolenie na DNS TCP
+      community.general.ufw:
+        rule: allow
+        port: 53
+        proto: tcp
+    - name: Zezwolenie na DNS UDP
+      community.general.ufw:
+        rule: allow
+        port: 53
+        proto: udp
+    - name: Zezwolenie na HTTP
+      community.general.ufw:
+        rule: allow
+        port: 80
+        proto: tcp
+    - name: Zezwolenie na HTTPS
+      community.general.ufw:
+        rule: allow
+        port: 443
+        proto: tcp
+    - name: blokada dostępu do sieci
+      community.general.ufw:
+        default: deny
+        direction: incoming
+    - name: Włączenie UFW
+      community.general.ufw:
+        state: enabled
+    
